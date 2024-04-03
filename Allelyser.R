@@ -69,7 +69,7 @@ hw_equilibrium(data_lading("APCgenotypesAnonym.xlsx"))
 ##############################################################################
 
 # Creating and printing contingency table
-conTable <- table(SNP)
+conTable <- table(data_lading("APCgenotypesAnonym.xlsx")
 
 
 
