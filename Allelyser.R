@@ -7,51 +7,55 @@
 ##                      /____/                     ##
 #####################################################
 
-# Packages
+######################
+###### Packages ######
+######################
 library(tidyverse)
 library(readxl)
 library(here)
+
 
 ##########################
 ###### Data loading ######
 ##########################
 
-data_lading <- function(excel_file){
+ChooseFile <- function(path){
   # Reading the excel file
-  data <- read_xlsx(here(excel_file))
-  
+  data <- read_xlsx(path)
   # Selecting a SNP
   a <- menu(colnames(data[,-1]), title="Please, select the SNP of your interest:") + 1
-  SNP <- cbind(data[, 1], data[, a])
+  SNP <<- cbind(data[, 1], data[, a])
   print(paste(colnames(SNP)[2], "selected"))
   
-  # Cleaning of the SNP table
-  SNP <- SNP[SNP[,2] %in% c("AA", "GG", "AG","TT", "CC", "CT", NA), ]
+  # Cleaning the SNP table
+  SNP <<- SNP[SNP[,2] %in% c("AA", "AC","AG", "AT", "GG", "GT", "GC", "GA", "TT", "TC", "TG","TA", "CC", "CT", "CG", "CA", NA), ]
   
   # Factorizing the data
-  SNP[, 1] <- as.factor(SNP[, 1])
-  SNP[, 2] <- as.factor(SNP[, 2])
-  
-  return(SNP)
+  SNP[, 1] <<- as.factor(SNP[, 1])
+  SNP[, 2] <<- as.factor(SNP[, 2])
 }
-data_lading("APCgenotypesAnonym.xlsx")
+
+HWTable <- addmargins(table(SNP[, 1:2]),1)
+print(HWTable)
+print(HWTable[c("Sum"),])
+complete_table(HWTable)
 ####################################################
 ###### Testing for Hardy-Weinberg equilibrium ######
 ####################################################
 
-hw_equilibrium <- function(table){
+HWE <- function(SNPtable, alpha = 0.05){
   # Observed genotype frequencies in the dataset
-  HWTable <- table(table[, 2])
-  
+  HWTable <- table(SNPtable[, 2])
   # Observed allele frequencies in the dataset
-  p <- (2*HWTable[[1]] + HWTable[[2]])/(2*(HWTable[[1]] + HWTable[[2]] + HWTable[[3]]))
-  q <- (2*HWTable[[3]] + HWTable[[2]])/(2*(HWTable[[1]] + HWTable[[2]] + HWTable[[3]]))
+  HWsum <- 2*(HWTable[[1]] + HWTable[[2]] + HWTable[[3]])
+  p <- (2*HWTable[[1]] + HWTable[[2]])/HWsum
+  q <- (2*HWTable[[3]] + HWTable[[2]])/HWsum
   
   # Theoretical probabilities of genotype frequencies
-  HW_exp <- c(p^2, 2*p*q, q^2)
+  HWexp <- c(p^2, 2*p*q, q^2)
   
   # Adding the expected genotype frequencies to the table
-  HWTable <- rbind(HWTable, HW_exp*sum(HWTable))
+  HWTable <- rbind(HWTable, HWexp*sum(HWTable))
   rownames(HWTable) <- c("Observed", "Expected")
   
   # Printing the table with expected genotype counts
@@ -60,17 +64,87 @@ hw_equilibrium <- function(table){
   # Finally, we can perform the chi squared test
   # We use just observed values for the testing. To determine the theoretical allele frequencies,
   # we use the 'p' argument of the chisq.test() function.
-  return(chisq.test(HWTable[1,], p = HW_exp))
+  pvalue <- chisq.test(HWTable[1,], p = HWexp)$p.value
+  
+  # Output of the function
+  if(pvalue < alpha){
+    print(paste0("The population is not at Hardy-Weinberg equilibrium (p-value = ", round(pvalue, 4), ")"))
+  }else{
+    print(paste0("The population is at Hardy-Weinberg equilibrium (p-value = ", round(pvalue, 4), ")"))
+  }
 }
-hw_equilibrium(data_lading("APCgenotypesAnonym.xlsx"))
+
 
 ##############################################################################
 ###### Testing if there is association among the phenotype and genotype ######
 ##############################################################################
 
-# Creating and printing contingency table
-conTable <- table(data_lading("APCgenotypesAnonym.xlsx")
+ChiSq <- function(data, significant_only = FALSE, alpha = 0.05){
+  
+  # Creating and printing contingency table
+  conTable <- table(data)
+  
+  # For each diagnosis, we want to test if there is difference in the genotype frequencies
+  # Empty data frame
+  pData <- data.frame(matrix(nrow = 0, ncol = 2))
 
+  # Chi-square for each diagnosis
+  for(x in 1:length(rownames(conTable))){
+    
+    # Single diagnosis
+    t <- conTable[x, ]
+    
+    # Chi-square test
+    if(sum(t) > 0){
+      pData <- rbind(pData, c(rownames(conTable)[x], round(chisq.test(t)$p.value, 6)))
+    }else{
+      pData <- rbind(pData, c(rownames(conTable)[x], NA))
+    }
+  }
+  
+  # Renaming colums
+  colnames(pData) <- c("Diagnosis", "p-value")
+  
+  # Changing p-values to numeric
+  pData[,2] <- as.numeric(pData[,2])
+    
+  # Print out the output table
+  if(significant_only == TRUE){
+    print(na.omit(pData[pData[,2] < alpha,]))
+  }else{
+    print(pData)
+  }
+}
+
+
+###########################
+###### Visualization ######
+###########################
+
+SNPHeatmap <- function(data, scaled = TRUE){
+  
+  # Create data for visualization
+  name <- colnames(data)[2]
+  t <- table(data)
+  t <- t[rowSums(t) > 0,]
+  
+  # Plot the data
+  if(scaled == TRUE){
+    heatmap(t, scale = "row", main = name)
+  }else if(scaled == FALSE){
+    heatmap(t, scale = "none")
+  }
+}
+
+
+##########################
+###### Presentation ######
+##########################
+
+ChooseFile(here("APCgenotypesAnonym.xlsx"))
+HWE(SNP)
+ChiSq(SNP, significant_only = TRUE)
+SNPHeatmap(SNP, scaled = TRUE)
 
 
 
