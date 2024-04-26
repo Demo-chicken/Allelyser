@@ -10,9 +10,11 @@
 ######################
 ###### Packages ######
 ######################
+
 library(tidyverse)
 library(readxl)
 library(here)
+library(biomaRt)
 
 
 ##########################
@@ -24,21 +26,21 @@ ChooseFile <- function(path){
   data <- read_xlsx(path)
   # Selecting a SNP
   a <- menu(colnames(data[,-1]), title="Please, select the SNP of your interest:") + 1
-  SNP <<- cbind(data[, 1], data[, a])
+  SNP <- cbind(data[, 1], data[, a])
   print(paste(colnames(SNP)[2], "selected"))
   
   # Cleaning the SNP table
-  SNP <<- SNP[SNP[,2] %in% c("AA", "AC","AG", "AT", "GG", "GT", "GC", "GA", "TT", "TC", "TG","TA", "CC", "CT", "CG", "CA", NA), ]
+  SNP <- SNP[SNP[,2] %in% c("AA", "GG", "CC","TT", "AT", "AC", "AG", "CT", "CG", "GT", NA), ]
   
   # Factorizing the data
-  SNP[, 1] <<- as.factor(SNP[, 1])
-  SNP[, 2] <<- as.factor(SNP[, 2])
+  SNP[, 1] <- as.factor(SNP[, 1])
+  SNP[, 2] <- as.factor(SNP[, 2])
+  
+  # Return the SNP table
+  return(SNP)
 }
 
-HWTable <- addmargins(table(SNP[, 1:2]),1)
-print(HWTable)
-print(HWTable[c("Sum"),])
-complete_table(HWTable)
+
 ####################################################
 ###### Testing for Hardy-Weinberg equilibrium ######
 ####################################################
@@ -46,7 +48,8 @@ complete_table(HWTable)
 HWE <- function(SNPtable, alpha = 0.05){
   # Observed genotype frequencies in the dataset
   HWTable <- table(SNPtable[, 2])
-  # Observed allele frequencies in the dataset
+
+    # Observed allele frequencies in the dataset
   HWsum <- 2*(HWTable[[1]] + HWTable[[2]] + HWTable[[3]])
   p <- (2*HWTable[[1]] + HWTable[[2]])/HWsum
   q <- (2*HWTable[[3]] + HWTable[[2]])/HWsum
@@ -68,10 +71,12 @@ HWE <- function(SNPtable, alpha = 0.05){
   
   # Output of the function
   if(pvalue < alpha){
-    print(paste0("The population is not at Hardy-Weinberg equilibrium (p-value = ", round(pvalue, 4), ")"))
+    pasting = paste0("The population is not at Hardy-Weinberg equilibrium (p-value = ", round(pvalue, 4), ")")
   }else{
-    print(paste0("The population is at Hardy-Weinberg equilibrium (p-value = ", round(pvalue, 4), ")"))
+    pasting = paste0("The population is at Hardy-Weinberg equilibrium (p-value = ", round(pvalue, 4), ")")
   }
+  return_list <- list(pvalue, HWTable, pasting)
+  return(return_list)
 }
 
 
@@ -94,9 +99,17 @@ ChiSq <- function(data, significant_only = FALSE, alpha = 0.05){
     # Single diagnosis
     t <- conTable[x, ]
     
+    # Observed allele frequencies in the dataset
+    HWsum <- 2*(t[[1]] + t[[2]] + t[[3]])
+    p <- (2*t[[1]] + t[[2]])/HWsum
+    q <- (2*t[[3]] + t[[2]])/HWsum
+    
+    # Theoretical probabilities of genotype frequencies
+    HWexp <- c(p^2, 2*p*q, q^2)
+    
     # Chi-square test
     if(sum(t) > 0){
-      pData <- rbind(pData, c(rownames(conTable)[x], round(chisq.test(t)$p.value, 6)))
+      pData <- rbind(pData, c(rownames(conTable)[x], round(chisq.test(t, p = HWexp)$p.value, 6)))
     }else{
       pData <- rbind(pData, c(rownames(conTable)[x], NA))
     }
@@ -108,11 +121,11 @@ ChiSq <- function(data, significant_only = FALSE, alpha = 0.05){
   # Changing p-values to numeric
   pData[,2] <- as.numeric(pData[,2])
     
-  # Print out the output table
+  # Return the output table
   if(significant_only == TRUE){
-    print(na.omit(pData[pData[,2] < alpha,]))
+    return(na.omit(pData[pData[,2] < alpha,]))
   }else{
-    print(pData)
+    return(pData)
   }
 }
 
@@ -136,17 +149,106 @@ SNPHeatmap <- function(data, scaled = TRUE){
   }
 }
 
+######################################
+###### Analysis of multiple SNP ######
+######################################
+
+# Load the data
+SNPdata <- read_xlsx(here("APCgenotypesAnonym.xlsx"))
+data_cl <- as.data.frame(lapply(SNPdata[,-1], function(x) ifelse(!x %in% c("AA", "GG", "CC","TT", "AT", "AC", "AG", "CT", "CG", "GT", NA), NA, x)))
+data_cl <- cbind(SNPdata[, 1], data_cl)
+
+# Extract rsIDs
+SNP_ID <- str_extract(colnames(SNPdata)[-1], "(?<=_|\\b)rs\\d+")
+
+# Chisq test for all the SNPs
+ChiSqAll <- function(data){
+  chi_sq <- data.frame(Diagnosis = levels(as.factor(data[,1])))
+  
+  # Single SNP
+  for(i in 2:ncol(data)){
+    ct <- table(data[,1], data[,i])
+    part_chi <- data.frame(matrix(nrow = 0, ncol = 2))
+    
+    for(x in 1:nrow(ct)){
+      # Single diagnosis
+      t <- ct[x, ]
+      print(t)
+      
+      # Observed allele frequencies in the dataset
+      HWsum <- 2*(t[[1]] + t[[2]] + t[[3]])
+      p <- (2*t[[1]] + t[[2]])/HWsum
+      q <- (2*t[[3]] + t[[2]])/HWsum
+      
+      # Theoretical probabilities of genotype frequencies
+      HWexp <- c(p^2, 2*p*q, q^2)
+      
+      # Chi-square test
+      if(sum(t) > 0){
+        part_chi <- rbind(part_chi, c(rownames(ct)[x], round(chisq.test(t, p = HWexp)$p.value, 6)))
+      }else{
+        part_chi <- rbind(part_chi, c(rownames(ct)[x], NA))
+      }
+    }
+    colnames(part_chi) <- c("Diagnosis", colnames(data_cl)[i])
+    chi_sq <- merge(chi_sq, part_chi, by = "Diagnosis")
+  }
+  return(chi_sq)
+}
+
+
+
+#####################
+###### LD plot ######
+#####################
+
+calculate_ld <- function(snp1, snp2) {
+  snp1_factor <- factor(snp1)
+  snp2_factor <- factor(snp2)
+  contingency_table <- table(snp1_factor, snp2_factor)
+  chi_square <- chisq.test(contingency_table)$statistic
+  sqrt(chi_square / length(snp1))
+}
+
+ld_matrix <- outer(data_cl[,-1], data_cl[,-1], Vectorize(calculate_ld))
+ld_matrix[lower.tri(ld_matrix)] <- NA
+rownames(ld_matrix) <- SNP_ID
+colnames(ld_matrix) <- SNP_ID
+
+ggplot(data = as.data.frame(as.table(ld_matrix)), aes(Var1, Var2, fill = Freq)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient(low = "cornflowerblue", high = "darkred", na.value = "transparent", guide = "legend") +  
+  theme_minimal() +
+  labs(x = "", y = "", title = "LD Plot") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+        axis.title = element_text(size = 12, face = "bold"),
+        plot.title = element_text(size = 14, face = "bold"),
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 8)) +
+  coord_fixed() +
+  theme(legend.position = "right")
+
+
+###########################
+###### SNP positions ######
+###########################
+
+snp_mart <- useMart(biomart = "ENSEMBL_MART_SNP", dataset="hsapiens_snp")
+snp_attributes <- c("refsnp_id", "chr_name", "chrom_start")
+snp_locations <- getBM(attributes=snp_attributes, filters="snp_filter", 
+                      values=SNP_ID, mart=snp_mart)
 
 ##########################
 ###### Presentation ######
 ##########################
 
-ChooseFile(here("APCgenotypesAnonym.xlsx"))
+# Single polymorphisms
+SNP <- ChooseFile(here("APCgenotypesAnonym.xlsx"))
 HWE(SNP)
-ChiSq(SNP, significant_only = TRUE)
+table(SNP)
+ChiSq(SNP)
 SNPHeatmap(SNP, scaled = TRUE)
 
-
-
+Chi_sq_table <- ChiSqAll(data_cl)
 
 
